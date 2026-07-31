@@ -1,0 +1,87 @@
+{
+	"geode": "5.8.2",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081"
+	},
+	"id": "qoult.consistency-map",
+	"name": "Consistency Map",
+	"version": "v1.0.0",
+	"developers": ["qoult"],
+	"repository": "https://github.com/qoult/consistency-map",
+	"description": "Shows where your timing is shaky before you start dying there, by measuring how much your clicks scatter across attempts.",
+	"tags": ["gameplay", "utility", "offline"],
+	"settings": {
+		"display-category": {
+			"name": "Display",
+			"type": "title"
+		},
+		"show-strip": {
+			"name": "Show strip while playing",
+			"description": "Draws a thin bar across the top of the screen. Only the shaky parts of the level are painted, from <cy>yellow</c> to <cr>red</c>.",
+			"type": "bool",
+			"default": true
+		},
+		"strip-offset": {
+			"name": "Strip offset from top",
+			"description": "Pixels between the top of the screen and the strip. Raise it if the strip covers something you need to see.",
+			"type": "int",
+			"default": 34,
+			"min": 4,
+			"max": 200,
+			"enable-if": "show-strip",
+			"control": {
+				"slider": true,
+				"arrows": true
+			}
+		},
+		"panel-entries": {
+			"name": "Sections on the pause panel",
+			"description": "How many of the shakiest sections to list when you pause.",
+			"type": "int",
+			"default": 5,
+			"min": 1,
+			"max": 12,
+			"control": {
+				"slider": true,
+				"arrows": true
+			}
+		},
+		"measurement-category": {
+			"name": "Measurement",
+			"type": "title"
+		},
+		"min-attempts": {
+			"name": "Minimum attempts to judge",
+			"description": "A section is ignored until you have played through it this many times. Low values make the map react quickly but report noise as danger.",
+			"type": "int",
+			"default": 5,
+			"min": 2,
+			"max": 50,
+			"control": {
+				"slider": true,
+				"arrows": true
+			}
+		},
+		"risk-threshold": {
+			"name": "Strip threshold",
+			"description": "How shaky a section must be before it gets painted on the strip, from 0 (paint everything) to 1 (only the worst). Does not affect the pause panel.",
+			"type": "float",
+			"default": 0.35,
+			"min": 0.0,
+			"max": 1.0,
+			"control": {
+				"slider": true,
+				"arrows": true,
+				"arrow-step": 0.05
+			}
+		},
+		"track-practice": {
+			"name": "Track practice mode",
+			"description": "Practice runs start from checkpoints and have different timing, so they are ignored by default.",
+			"type": "bool",
+			"default": false
+		}
+	}
+}
