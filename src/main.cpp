@@ -2,6 +2,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
+#include <Geode/ui/GeodeUI.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -313,6 +314,33 @@ class $modify(ConsistencyGameLayer, GJBaseGameLayer) {
     }
 };
 
+namespace {
+    // worst sections first; needs ConsistencyPlayLayer, so it lives below it
+    std::vector<std::pair<double, size_t>> rankSections(PlayLayer* pl, int minAttempts) {
+        std::vector<std::pair<double, size_t>> ranked;
+        auto const& sections = static_cast<ConsistencyPlayLayer*>(pl)->m_fields->m_sections;
+
+        for (size_t i = 0; i < sections.size(); i++) {
+            double risk = riskOf(sections[i], minAttempts);
+            if (risk > 0.0) ranked.emplace_back(risk, i);
+        }
+        std::sort(ranked.begin(), ranked.end(), [](auto const& a, auto const& b) { return a.first > b.first; });
+        return ranked;
+    }
+
+    // report whichever kind of inconsistency is actually driving the score
+    std::string describeSection(Section const& s, float percent) {
+        double spread = std::clamp(s.spreadTicks() / SPREAD_CEILING_TICKS, 0.0, 1.0);
+        double flip = 1.0 - std::abs(2.0 * s.clickRate() - 1.0);
+
+        std::string detail = (s.n >= 2 && spread >= flip)
+            ? fmt::format("spread {:.1f} ticks", s.spreadTicks())
+            : fmt::format("pressed in {:.0f}% of runs", s.clickRate() * 100.0);
+
+        return fmt::format("{:.0f}%  {}  ({} runs)", percent, detail, s.reached);
+    }
+}
+
 class $modify(ConsistencyPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
@@ -320,60 +348,78 @@ class $modify(ConsistencyPauseLayer, PauseLayer) {
         auto pl = PlayLayer::get();
         if (!pl || pl->m_levelLength <= 0.f) return;
 
-        auto self = static_cast<ConsistencyPlayLayer*>(pl);
+        int minAttempts = static_cast<int>(Mod::get()->getSettingValue<int64_t>("min-attempts"));
+        auto ranked = rankSections(pl, minAttempts);
+
+        // one line, so the pause screen stays readable; the full list is a click away
+        std::string summary;
+        if (ranked.empty()) {
+            summary = "Consistency Map: not enough attempts yet";
+        }
+        else {
+            auto const& s = static_cast<ConsistencyPlayLayer*>(pl)->m_fields->m_sections[ranked[0].second];
+            float percent = (static_cast<float>(ranked[0].second) * SECTION_WIDTH) / pl->m_levelLength * 100.f;
+            summary = "Shakiest: " + describeSection(s, percent);
+        }
+
+        auto line = CCLabelBMFont::create(summary.c_str(), "chatFont.fnt");
+        line->setScale(0.5f);
+        line->setAnchorPoint(ccp(0.f, 0.5f));
+        line->setPosition(ccp(16.f, 42.f));
+        if (!ranked.empty()) line->setColor(colorForRisk(ranked[0].first));
+        else line->setOpacity(160);
+        this->addChild(line, 100);
+
+        auto menu = CCMenu::create();
+        menu->setPosition(CCPointZero);
+        this->addChild(menu, 100);
+
+        auto viewSprite = ButtonSprite::create("Map");
+        viewSprite->setScale(0.45f);
+        auto viewButton = CCMenuItemSpriteExtra::create(
+            viewSprite, this, menu_selector(ConsistencyPauseLayer::onViewMap)
+        );
+        viewButton->setPosition(ccp(40.f, 18.f));
+        menu->addChild(viewButton);
+
+        auto gearSprite = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
+        gearSprite->setScale(0.45f);
+        auto gearButton = CCMenuItemSpriteExtra::create(
+            gearSprite, this, menu_selector(ConsistencyPauseLayer::onSettings)
+        );
+        gearButton->setPosition(ccp(88.f, 18.f));
+        menu->addChild(gearButton);
+    }
+
+    void onViewMap(CCObject*) {
+        auto pl = PlayLayer::get();
+        if (!pl) return;
+
         int minAttempts = static_cast<int>(Mod::get()->getSettingValue<int64_t>("min-attempts"));
         int wanted = static_cast<int>(Mod::get()->getSettingValue<int64_t>("panel-entries"));
+        auto ranked = rankSections(pl, minAttempts);
+        auto const& sections = static_cast<ConsistencyPlayLayer*>(pl)->m_fields->m_sections;
 
-        // worst sections first
-        std::vector<std::pair<double, size_t>> ranked;
-        for (size_t i = 0; i < self->m_fields->m_sections.size(); i++) {
-            double risk = riskOf(self->m_fields->m_sections[i], minAttempts);
-            if (risk > 0.0) ranked.emplace_back(risk, i);
-        }
-        std::sort(ranked.begin(), ranked.end(), [](auto const& a, auto const& b) { return a.first > b.first; });
-
-        auto win = CCDirector::sharedDirector()->getWinSize();
-        auto panel = CCNode::create();
-        panel->setZOrder(100);
-        panel->setPosition(ccp(14.f, win.height - 42.f));
-
-        auto title = CCLabelBMFont::create("Consistency Map", "bigFont.fnt");
-        title->setScale(0.35f);
-        title->setAnchorPoint(ccp(0.f, 0.5f));
-        panel->addChild(title);
-
+        std::string body;
         if (ranked.empty()) {
-            auto none = CCLabelBMFont::create("not enough attempts yet", "chatFont.fnt");
-            none->setScale(0.5f);
-            none->setAnchorPoint(ccp(0.f, 0.5f));
-            none->setPositionY(-16.f);
-            none->setOpacity(160);
-            panel->addChild(none);
-        }
-
-        for (int rank = 0; rank < std::min<int>(wanted, ranked.size()); rank++) {
-            auto const& s = self->m_fields->m_sections[ranked[rank].second];
-            float percent = (static_cast<float>(ranked[rank].second) * SECTION_WIDTH) / pl->m_levelLength * 100.f;
-
-            // report whichever kind of inconsistency is actually driving the score
-            double spread = std::clamp(s.spreadTicks() / SPREAD_CEILING_TICKS, 0.0, 1.0);
-            double flip = 1.0 - std::abs(2.0 * s.clickRate() - 1.0);
-
-            std::string detail = (s.n >= 2 && spread >= flip)
-                ? fmt::format("spread {:.1f} ticks", s.spreadTicks())
-                : fmt::format("pressed in {:.0f}% of runs", s.clickRate() * 100.0);
-
-            auto line = CCLabelBMFont::create(
-                fmt::format("{:.0f}%  {}  ({} runs)", percent, detail, s.reached).c_str(),
-                "chatFont.fnt"
+            body = fmt::format(
+                "No section has been played through <cy>{}</c> times yet.\n\n"
+                "Sections stay unscored until then, so the map reports your timing and not noise.",
+                minAttempts
             );
-            line->setScale(0.5f);
-            line->setAnchorPoint(ccp(0.f, 0.5f));
-            line->setPositionY(-16.f - rank * 14.f);
-            line->setColor(colorForRisk(ranked[rank].first));
-            panel->addChild(line);
+        }
+        else {
+            for (int rank = 0; rank < std::min<int>(wanted, ranked.size()); rank++) {
+                auto const& s = sections[ranked[rank].second];
+                float percent = (static_cast<float>(ranked[rank].second) * SECTION_WIDTH) / pl->m_levelLength * 100.f;
+                body += describeSection(s, percent) + "\n";
+            }
         }
 
-        this->addChild(panel);
+        FLAlertLayer::create("Consistency Map", body, "OK")->show();
+    }
+
+    void onSettings(CCObject*) {
+        geode::openSettingsPopup(Mod::get());
     }
 };

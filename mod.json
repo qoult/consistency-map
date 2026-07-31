@@ -37,8 +37,8 @@
 			}
 		},
 		"panel-entries": {
-			"name": "Sections on the pause panel",
-			"description": "How many of the shakiest sections to list when you pause.",
+			"name": "Sections in the map popup",
+			"description": "How many of the shakiest sections the <cy>Map</c> button lists.",
 			"type": "int",
 			"default": 5,
 			"min": 1,
