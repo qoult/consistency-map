@@ -1,3 +1,10 @@
+# v1.1.0
+
+- The <cy>Map</c> button now opens a proper window instead of a text box: the
+  level drawn as a bar at the top, then a table of the shakiest sections with a
+  colour chip, the percentage, what makes each one shaky and how many runs are
+  behind the number.
+
 # v1.0.1
 
 - Fixed the mod reporting "not enough attempts yet" after plenty of attempts. A

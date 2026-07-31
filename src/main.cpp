@@ -3,6 +3,7 @@
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/ui/GeodeUI.hpp>
+#include <Geode/ui/Popup.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -137,6 +138,70 @@ namespace {
         auto red = static_cast<GLubyte>(std::lround(255.0 * std::min(1.0, r * 2.0)));
         auto green = static_cast<GLubyte>(std::lround(255.0 * std::min(1.0, (1.0 - r) * 2.0)));
         return ccc3(red, green, 60);
+    }
+
+    /*
+    the level drawn as a bar. every section you have played is painted, so it
+    fills in from the first attempt instead of staying blank until something is
+    scored: grey for played but not judged yet, green for calm, yellow to red for
+    shaky. calm and grey stretches are merged into single nodes, otherwise a long
+    level would cost a thousand of them. shared by the in-game strip and the popup.
+    */
+    CCNode* buildStrip(
+        std::vector<Section> const& sections, float levelLength,
+        float barWidth, float height, int minAttempts, double threshold
+    ) {
+        auto strip = CCNode::create();
+
+        // visible on its own, so an empty map still shows the mod is alive
+        strip->addChild(CCLayerColor::create(ccc4(0, 0, 0, 160), barWidth, height));
+        if (levelLength <= 0.f) return strip;
+
+        float unit = barWidth / levelLength;
+        size_t count = sections.size();
+
+        auto paint = [&](size_t from, size_t to, ccColor3B color, GLubyte alpha) {
+            float x = static_cast<float>(from) * SECTION_WIDTH * unit;
+            float w = std::max(2.f, static_cast<float>(to - from) * SECTION_WIDTH * unit);
+            if (x >= barWidth) return;
+            w = std::min(w, barWidth - x);
+
+            auto band = CCLayerColor::create(ccc4(color.r, color.g, color.b, alpha), w, height);
+            band->setPositionX(x);
+            strip->addChild(band);
+        };
+
+        // -2 never played, -1 played but not judged yet, 0 calm, 1 shaky
+        auto classOf = [&](size_t i) {
+            auto const& s = sections[i];
+            if (s.reached <= 0) return -2;
+            double risk = riskOf(s, minAttempts);
+            if (risk < 0.0) return -1;
+            return risk >= threshold ? 1 : 0;
+        };
+
+        size_t i = 0;
+        while (i < count) {
+            int cls = classOf(i);
+            if (cls == -2) {
+                i++;
+                continue;
+            }
+            if (cls == 1) {
+                // shaky sections keep their own shade, so they are never merged
+                paint(i, i + 1, colorForRisk(riskOf(sections[i], minAttempts)), 235);
+                i++;
+                continue;
+            }
+
+            size_t j = i;
+            while (j < count && classOf(j) == cls) j++;
+            if (cls == 0) paint(i, j, ccc3(60, 200, 110), 150);
+            else paint(i, j, ccc3(120, 124, 140), 90);
+            i = j;
+        }
+
+        return strip;
     }
 }
 
@@ -280,59 +345,14 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
         float y = win.height - static_cast<float>(Mod::get()->getSettingValue<int64_t>("strip-offset"));
         float height = 6.f;
 
-        auto strip = CCNode::create();
-        strip->setZOrder(1000);
-        strip->setPosition(ccp(left, y));
-
-        // visible on its own, so an empty map still shows the mod is alive
-        auto back = CCLayerColor::create(ccc4(0, 0, 0, 160), barWidth, height);
-        strip->addChild(back);
-
         int minAttempts = static_cast<int>(Mod::get()->getSettingValue<int64_t>("min-attempts"));
         double threshold = Mod::get()->getSettingValue<double>("risk-threshold");
-        float unit = barWidth / m_levelLength;
-        size_t count = m_fields->m_sections.size();
 
-        auto paint = [&](size_t from, size_t to, ccColor3B color, GLubyte alpha) {
-            float x = static_cast<float>(from) * SECTION_WIDTH * unit;
-            float w = std::max(2.f, static_cast<float>(to - from) * SECTION_WIDTH * unit);
-            if (x >= barWidth) return;
-            w = std::min(w, barWidth - x);
-
-            auto band = CCLayerColor::create(ccc4(color.r, color.g, color.b, alpha), w, height);
-            band->setPositionX(x);
-            strip->addChild(band);
-        };
-
-        // -2 never played, -1 played but not judged yet, 0 calm, 1 shaky
-        auto classOf = [&](size_t i) {
-            auto const& s = m_fields->m_sections[i];
-            if (s.reached <= 0) return -2;
-            double risk = riskOf(s, minAttempts);
-            if (risk < 0.0) return -1;
-            return risk >= threshold ? 1 : 0;
-        };
-
-        size_t i = 0;
-        while (i < count) {
-            int cls = classOf(i);
-            if (cls == -2) {
-                i++;
-                continue;
-            }
-            if (cls == 1) {
-                // shaky sections keep their own shade, so they are never merged
-                paint(i, i + 1, colorForRisk(riskOf(m_fields->m_sections[i], minAttempts)), 235);
-                i++;
-                continue;
-            }
-
-            size_t j = i;
-            while (j < count && classOf(j) == cls) j++;
-            if (cls == 0) paint(i, j, ccc3(60, 200, 110), 150);
-            else paint(i, j, ccc3(120, 124, 140), 90);
-            i = j;
-        }
+        auto strip = buildStrip(
+            m_fields->m_sections, m_levelLength, barWidth, height, minAttempts, threshold
+        );
+        strip->setZOrder(1000);
+        strip->setPosition(ccp(left, y));
 
         this->addChild(strip);
         m_fields->m_strip = strip;
@@ -348,7 +368,8 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
 
         log::debug(
             "strip built: levelLength {:.0f}, sections {}, visited {}, scored {}, most runs {}, bands {}, at ({:.0f}, {:.0f})",
-            m_levelLength, count, visited, scored, mostRuns, strip->getChildrenCount() - 1, left, y
+            m_levelLength, m_fields->m_sections.size(), visited, scored, mostRuns,
+            strip->getChildrenCount() - 1, left, y
         );
     }
 };
@@ -390,6 +411,161 @@ namespace {
         return fmt::format("{:.0f}%  {}  ({} runs)", percent, detail, s.reached);
     }
 }
+
+class ConsistencyPopup : public geode::Popup {
+protected:
+    bool init(PlayLayer* pl) {
+        int minAttempts = static_cast<int>(Mod::get()->getSettingValue<int64_t>("min-attempts"));
+        double threshold = Mod::get()->getSettingValue<double>("risk-threshold");
+        int wanted = static_cast<int>(Mod::get()->getSettingValue<int64_t>("panel-entries"));
+
+        auto ranked = rankSections(pl, minAttempts);
+        auto const& sections = static_cast<ConsistencyPlayLayer*>(pl)->m_fields->m_sections;
+        int rows = std::min<int>(wanted, ranked.size());
+
+        constexpr float ROW_HEIGHT = 24.f;
+        constexpr float WIDTH = 400.f;
+        float height = 132.f + std::max(1, rows) * ROW_HEIGHT;
+
+        if (!Popup::init(WIDTH, height)) return false;
+        this->setTitle("Consistency Map");
+
+        float inner = WIDTH - 56.f;
+        float left = (WIDTH - inner) / 2.f;
+
+        // the level itself, same colours as the in-game strip
+        auto map = buildStrip(sections, pl->m_levelLength, inner, 10.f, minAttempts, threshold);
+        map->setPosition(ccp(left, height - 62.f));
+        m_mainLayer->addChild(map);
+
+        auto start = CCLabelBMFont::create("0%", "chatFont.fnt");
+        start->setScale(0.4f);
+        start->setAnchorPoint(ccp(0.f, 0.5f));
+        start->setPosition(ccp(left, height - 72.f));
+        start->setOpacity(120);
+        m_mainLayer->addChild(start);
+
+        auto finish = CCLabelBMFont::create("100%", "chatFont.fnt");
+        finish->setScale(0.4f);
+        finish->setAnchorPoint(ccp(1.f, 0.5f));
+        finish->setPosition(ccp(left + inner, height - 72.f));
+        finish->setOpacity(120);
+        m_mainLayer->addChild(finish);
+
+        float tableTop = height - 88.f;
+
+        if (rows == 0) {
+            int visited = 0;
+            for (auto const& s : sections) if (s.reached > 0) visited++;
+
+            auto empty = CCLabelBMFont::create(
+                fmt::format("No section played {} times yet", minAttempts).c_str(), "bigFont.fnt"
+            );
+            empty->setScale(0.4f);
+            empty->setPosition(ccp(WIDTH / 2.f, tableTop - 14.f));
+            empty->setOpacity(180);
+            m_mainLayer->addChild(empty);
+
+            auto hint = CCLabelBMFont::create(
+                fmt::format("{} sections visited so far - keep grinding", visited).c_str(), "chatFont.fnt"
+            );
+            hint->setScale(0.45f);
+            hint->setPosition(ccp(WIDTH / 2.f, tableTop - 34.f));
+            hint->setOpacity(120);
+            m_mainLayer->addChild(hint);
+        }
+        else {
+            // column headers
+            auto addHeader = [&](char const* text, float x, float anchorX) {
+                auto label = CCLabelBMFont::create(text, "chatFont.fnt");
+                label->setScale(0.36f);
+                label->setAnchorPoint(ccp(anchorX, 0.5f));
+                label->setPosition(ccp(x, tableTop + 2.f));
+                label->setOpacity(110);
+                m_mainLayer->addChild(label);
+            };
+            addHeader("AT", left + 16.f, 0.f);
+            addHeader("WHAT MAKES IT SHAKY", left + 62.f, 0.f);
+            addHeader("RUNS", left + inner - 4.f, 1.f);
+
+            for (int rank = 0; rank < rows; rank++) {
+                auto const& s = sections[ranked[rank].second];
+                double risk = ranked[rank].first;
+                float y = tableTop - 12.f - rank * ROW_HEIGHT;
+                float percent = (static_cast<float>(ranked[rank].second) * SECTION_WIDTH) / pl->m_levelLength * 100.f;
+
+                // alternating bands, so long rows stay readable
+                auto band = CCLayerColor::create(
+                    ccc4(255, 255, 255, rank % 2 == 0 ? 18 : 8), inner, ROW_HEIGHT - 2.f
+                );
+                band->setPosition(ccp(left, y - (ROW_HEIGHT - 2.f) / 2.f));
+                m_mainLayer->addChild(band);
+
+                auto color = colorForRisk(risk);
+                auto chip = CCLayerColor::create(ccc4(color.r, color.g, color.b, 255), 4.f, ROW_HEIGHT - 8.f);
+                chip->setPosition(ccp(left + 6.f, y - (ROW_HEIGHT - 8.f) / 2.f));
+                m_mainLayer->addChild(chip);
+
+                auto at = CCLabelBMFont::create(fmt::format("{:.0f}%", percent).c_str(), "bigFont.fnt");
+                at->setScale(0.34f);
+                at->setAnchorPoint(ccp(0.f, 0.5f));
+                at->setPosition(ccp(left + 16.f, y));
+                at->setColor(color);
+                m_mainLayer->addChild(at);
+
+                double spread = std::clamp(s.spreadTicks() / SPREAD_CEILING_TICKS, 0.0, 1.0);
+                double flip = 1.0 - std::abs(2.0 * s.clickRate() - 1.0);
+                std::string detail = (s.n >= 2 && spread >= flip)
+                    ? fmt::format("clicks scatter over {:.1f} ticks", s.spreadTicks())
+                    : (s.clickRate() > 0.99
+                        ? "always pressed, steady timing"
+                        : fmt::format("pressed in only {:.0f}% of runs", s.clickRate() * 100.0));
+
+                auto what = CCLabelBMFont::create(detail.c_str(), "chatFont.fnt");
+                what->setScale(0.5f);
+                what->setAnchorPoint(ccp(0.f, 0.5f));
+                what->setPosition(ccp(left + 62.f, y));
+                m_mainLayer->addChild(what);
+
+                auto runs = CCLabelBMFont::create(std::to_string(s.reached).c_str(), "chatFont.fnt");
+                runs->setScale(0.5f);
+                runs->setAnchorPoint(ccp(1.f, 0.5f));
+                runs->setPosition(ccp(left + inner - 4.f, y));
+                runs->setOpacity(150);
+                m_mainLayer->addChild(runs);
+            }
+        }
+
+        int visited = 0;
+        int scored = 0;
+        for (auto const& s : sections) {
+            if (s.reached > 0) visited++;
+            if (s.reached >= minAttempts) scored++;
+        }
+
+        auto footer = CCLabelBMFont::create(
+            fmt::format("{} scored - {} visited - a section needs {} runs", scored, visited, minAttempts).c_str(),
+            "chatFont.fnt"
+        );
+        footer->setScale(0.4f);
+        footer->setPosition(ccp(WIDTH / 2.f, 22.f));
+        footer->setOpacity(110);
+        m_mainLayer->addChild(footer);
+
+        return true;
+    }
+
+public:
+    static ConsistencyPopup* create(PlayLayer* pl) {
+        auto ret = new ConsistencyPopup();
+        if (ret->init(pl)) {
+            ret->autorelease();
+            return ret;
+        }
+        CC_SAFE_DELETE(ret);
+        return nullptr;
+    }
+};
 
 class $modify(ConsistencyPauseLayer, PauseLayer) {
     void customSetup() {
@@ -449,32 +625,7 @@ class $modify(ConsistencyPauseLayer, PauseLayer) {
         auto pl = PlayLayer::get();
         if (!pl) return;
 
-        int minAttempts = static_cast<int>(Mod::get()->getSettingValue<int64_t>("min-attempts"));
-        int wanted = static_cast<int>(Mod::get()->getSettingValue<int64_t>("panel-entries"));
-        auto ranked = rankSections(pl, minAttempts);
-        auto const& sections = static_cast<ConsistencyPlayLayer*>(pl)->m_fields->m_sections;
-
-        std::string body;
-        if (ranked.empty()) {
-            int played = 0;
-            for (auto const& s : sections) if (s.reached > 0) played++;
-
-            body = fmt::format(
-                "No section has been played through <cy>{}</c> times yet.\n\n"
-                "<cy>{}</c> sections have been visited so far. They stay unscored until "
-                "there are enough runs to tell your timing from noise.",
-                minAttempts, played
-            );
-        }
-        else {
-            for (int rank = 0; rank < std::min<int>(wanted, ranked.size()); rank++) {
-                auto const& s = sections[ranked[rank].second];
-                float percent = (static_cast<float>(ranked[rank].second) * SECTION_WIDTH) / pl->m_levelLength * 100.f;
-                body += describeSection(s, percent) + "\n";
-            }
-        }
-
-        FLAlertLayer::create("Consistency Map", body, "OK")->show();
+        if (auto popup = ConsistencyPopup::create(pl)) popup->show();
     }
 
     // NOT onSettings: PauseLayer already has one, and a matching name in a
