@@ -1,3 +1,9 @@
+# v1.0.1
+
+- Fixed the gear button taking over GD's own pause settings. The callback was
+  named `onSettings`, which is also a real `PauseLayer` method, so Geode hooked
+  the game's function instead of adding a new one.
+
 # v1.0.0
 
 - First release.

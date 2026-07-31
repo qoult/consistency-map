@@ -7,7 +7,7 @@
 	},
 	"id": "qoult.consistency-map",
 	"name": "Consistency Map",
-	"version": "v1.0.0",
+	"version": "v1.0.1",
 	"developers": ["qoult"],
 	"repository": "https://github.com/qoult/consistency-map",
 	"description": "Shows where your timing is shaky before you start dying there, by measuring how much your clicks scatter across attempts.",

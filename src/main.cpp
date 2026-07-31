@@ -385,7 +385,7 @@ class $modify(ConsistencyPauseLayer, PauseLayer) {
         auto gearSprite = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
         gearSprite->setScale(0.45f);
         auto gearButton = CCMenuItemSpriteExtra::create(
-            gearSprite, this, menu_selector(ConsistencyPauseLayer::onSettings)
+            gearSprite, this, menu_selector(ConsistencyPauseLayer::onModSettings)
         );
         gearButton->setPosition(ccp(88.f, 18.f));
         menu->addChild(gearButton);
@@ -419,7 +419,9 @@ class $modify(ConsistencyPauseLayer, PauseLayer) {
         FLAlertLayer::create("Consistency Map", body, "OK")->show();
     }
 
-    void onSettings(CCObject*) {
+    // NOT onSettings: PauseLayer already has one, and a matching name in a
+    // $modify class hooks the game's function instead of adding a new method
+    void onModSettings(CCObject*) {
         geode::openSettingsPopup(Mod::get());
     }
 };
