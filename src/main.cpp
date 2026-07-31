@@ -240,9 +240,13 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
     void beginAttempt() {
         m_fields->m_committed = false;
         m_fields->m_clickedHere.assign(m_fields->m_sections.size() + 1, 0);
-        float x = m_player1 ? m_player1->getPositionX() : 0.f;
-        m_fields->m_startX = x;
-        m_fields->m_maxX = x;
+        // left unknown on purpose: where the attempt really starts is whatever
+        // position the first running frame reports. reading it here would mean
+        // trusting that GD has already moved the player onto the start pos, and
+        // if it hasn't, every section before the start pos would be recorded as
+        // played and calm
+        m_fields->m_startX = -1.f;
+        m_fields->m_maxX = -1.f;
         m_fields->m_lastX = -1.f;
     }
 
@@ -266,8 +270,20 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
         m_fields->m_clickedHere[idx] = 1;
     }
 
-    void commitAttempt() {
-        if (m_fields->m_committed || !tracking()) return;
+    void commitAttempt(char const* why) {
+        if (m_fields->m_committed) {
+            log::debug("commit skipped from {}: already committed", why);
+            return;
+        }
+        if (!tracking()) {
+            log::debug("commit skipped from {}: not tracking (practice {}, test {})", why, m_isPracticeMode, m_isTestMode);
+            return;
+        }
+        // an attempt that never ran a frame tells us nothing
+        if (m_fields->m_startX < 0.f) {
+            log::debug("commit skipped from {}: attempt never ran a frame", why);
+            return;
+        }
         m_fields->m_committed = true;
 
         size_t from = sectionOf(m_fields->m_startX);
@@ -278,6 +294,11 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
             if (i < m_fields->m_clickedHere.size() && m_fields->m_clickedHere[i]) s.withClick += 1;
         }
 
+        log::debug(
+            "commit from {}: startX {:.0f} maxX {:.0f} -> sections {}..{}",
+            why, m_fields->m_startX, m_fields->m_maxX, from, to
+        );
+
         Mod::get()->setSavedValue<std::string>(m_fields->m_key, encodeSections(m_fields->m_sections));
     }
 
@@ -286,6 +307,12 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
         if (!m_player1 || !tracking()) return;
 
         float x = m_player1->getPositionX();
+        // first running frame of the attempt: this is where it actually starts,
+        // start pos or not
+        if (m_fields->m_startX < 0.f) {
+            m_fields->m_startX = x;
+            m_fields->m_maxX = x;
+        }
         if (x > m_fields->m_maxX) m_fields->m_maxX = x;
 
         // sample how fast the player crosses this part of the level, so a spread in
@@ -302,25 +329,28 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
+        // commit before the original runs: GD's death handling may reset the
+        // attempt underneath us, and the travelled distance would be gone
+        if (player != m_player2) commitAttempt("death");
         PlayLayer::destroyPlayer(player, object);
-        if (player == m_player2) return;
-        commitAttempt();
     }
 
     void levelComplete() {
-        commitAttempt();
+        commitAttempt("complete");
         PlayLayer::levelComplete();
     }
 
     void resetLevel() {
+        // commit first: the original puts the player back at the start, and the
+        // attempt that just ended still needs its distance counted
+        commitAttempt("reset");
         PlayLayer::resetLevel();
-        commitAttempt();  // covers quitting straight into a retry
         beginAttempt();
         rebuildStrip();
     }
 
     void onQuit() {
-        commitAttempt();
+        commitAttempt("quit");
         PlayLayer::onQuit();
     }
 

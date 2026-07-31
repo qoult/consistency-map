@@ -1,3 +1,12 @@
+# v1.1.1
+
+- Fixed only the section an attempt started in being counted as played, which
+  made the map work for the level start and for each start pos and nothing in
+  between. The travelled distance is now committed before GD's own death and
+  reset handling runs.
+- Where an attempt starts is taken from its first running frame instead of the
+  player position at reset, so a start pos can't be missed.
+
 # v1.1.0
 
 - The <cy>Map</c> button now opens a proper window instead of a text box: the
