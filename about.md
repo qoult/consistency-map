@@ -1,17 +1,21 @@
 # Consistency Map
 
-Shows **where your timing is shaky before you start dying there**.
+**Shows where your timing is shaky before you start dying there.**
 
-Death trackers tell you where you already failed. Consistency Map watches the
-attempts you survive: it records where in the level each jump was pressed, and
-reports the sections where those presses scatter.
+A death tracker tells you where you already failed. This one watches the
+attempts you *survive* and finds the places you are getting away with.
 
-The level is cut into sections one block wide. Each one is scored by the spread
-of your click positions - reported in 240 TPS physics ticks - and by how often
-you press there at all, since pressing on half your runs and not the other half
-is its own kind of inconsistency. Sections are ignored until you have played
-through them enough times for the number to mean anything.
+Every jump is recorded by where in the level you pressed it. Each one-block
+section is then scored on two things: how much your presses <cy>scatter</c>,
+reported in <cl>240 TPS ticks</c>, and how often you press there <cy>at all</c> -
+half the runs is its own kind of shaky.
 
-<cy>A strip across the top of the screen</c> paints only the sections worth
-worrying about. <cy>Pausing</c> lists the shakiest ones with the numbers behind
-them.
+<cg>A strip at the top of the screen</c> paints only the risky sections, yellow
+to <cr>red</c>. <cg>Pausing</c> lists the worst with their numbers:
+
+```
+62%  spread 3.2 ticks  (24 runs)
+```
+
+Needs a dozen runs on a level to mean anything. Practice is ignored by default.
+Nothing leaves your save.
