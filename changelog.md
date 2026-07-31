@@ -1,5 +1,12 @@
 # v1.0.1
 
+- Fixed the mod reporting "not enough attempts yet" after plenty of attempts. A
+  section you play cleanly scores exactly 0.0, and 0.0 was being thrown away
+  along with the "no data" value, so consistent play looked like no data at all.
+  Calm sections are now scored, listed and reported as calm.
+- The strip now paints every section you have played - grey until it is scored,
+  then green, then yellow to red - so it fills in from the first attempt instead
+  of staying blank. Its backing bar is visible on its own too.
 - Fixed the gear button taking over GD's own pause settings. The callback was
   named `onSettings`, which is also a real `PauseLayer` method, so Geode hooked
   the game's function instead of adding a new one.

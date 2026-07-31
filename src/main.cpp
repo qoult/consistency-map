@@ -260,9 +260,11 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
     }
 
     /*
-    the strip sits where the progress bar is and only paints the sections worth
-    worrying about - drawing every section of a long level would mean a thousand
-    nodes for a picture that is mostly green anyway
+    the strip sits where the progress bar is. every section you have played is
+    painted, so the bar fills in from the first attempt instead of staying blank
+    until something is scored: grey for played but not judged yet, green for
+    calm, yellow to red for shaky. calm and grey stretches are merged into single
+    nodes, otherwise a long level would cost a thousand of them.
     */
     void rebuildStrip() {
         if (m_fields->m_strip) {
@@ -276,32 +278,78 @@ class $modify(ConsistencyPlayLayer, PlayLayer) {
         float barWidth = win.width * 0.6f;
         float left = (win.width - barWidth) / 2.f;
         float y = win.height - static_cast<float>(Mod::get()->getSettingValue<int64_t>("strip-offset"));
-        float height = 5.f;
+        float height = 6.f;
 
         auto strip = CCNode::create();
         strip->setZOrder(1000);
         strip->setPosition(ccp(left, y));
 
-        auto back = CCLayerColor::create(ccc4(0, 0, 0, 90), barWidth, height);
+        // visible on its own, so an empty map still shows the mod is alive
+        auto back = CCLayerColor::create(ccc4(0, 0, 0, 160), barWidth, height);
         strip->addChild(back);
 
         int minAttempts = static_cast<int>(Mod::get()->getSettingValue<int64_t>("min-attempts"));
         double threshold = Mod::get()->getSettingValue<double>("risk-threshold");
         float unit = barWidth / m_levelLength;
+        size_t count = m_fields->m_sections.size();
 
-        for (size_t i = 0; i < m_fields->m_sections.size(); i++) {
-            double risk = riskOf(m_fields->m_sections[i], minAttempts);
-            if (risk < threshold) continue;
+        auto paint = [&](size_t from, size_t to, ccColor3B color, GLubyte alpha) {
+            float x = static_cast<float>(from) * SECTION_WIDTH * unit;
+            float w = std::max(2.f, static_cast<float>(to - from) * SECTION_WIDTH * unit);
+            if (x >= barWidth) return;
+            w = std::min(w, barWidth - x);
 
-            float w = std::max(2.f, SECTION_WIDTH * unit);
-            auto color = colorForRisk(risk);
-            auto mark = CCLayerColor::create(ccc4(color.r, color.g, color.b, 235), w, height);
-            mark->setPositionX(std::min(barWidth - w, static_cast<float>(i) * SECTION_WIDTH * unit));
-            strip->addChild(mark);
+            auto band = CCLayerColor::create(ccc4(color.r, color.g, color.b, alpha), w, height);
+            band->setPositionX(x);
+            strip->addChild(band);
+        };
+
+        // -2 never played, -1 played but not judged yet, 0 calm, 1 shaky
+        auto classOf = [&](size_t i) {
+            auto const& s = m_fields->m_sections[i];
+            if (s.reached <= 0) return -2;
+            double risk = riskOf(s, minAttempts);
+            if (risk < 0.0) return -1;
+            return risk >= threshold ? 1 : 0;
+        };
+
+        size_t i = 0;
+        while (i < count) {
+            int cls = classOf(i);
+            if (cls == -2) {
+                i++;
+                continue;
+            }
+            if (cls == 1) {
+                // shaky sections keep their own shade, so they are never merged
+                paint(i, i + 1, colorForRisk(riskOf(m_fields->m_sections[i], minAttempts)), 235);
+                i++;
+                continue;
+            }
+
+            size_t j = i;
+            while (j < count && classOf(j) == cls) j++;
+            if (cls == 0) paint(i, j, ccc3(60, 200, 110), 150);
+            else paint(i, j, ccc3(120, 124, 140), 90);
+            i = j;
         }
 
         this->addChild(strip);
         m_fields->m_strip = strip;
+
+        int visited = 0;
+        int scored = 0;
+        int mostRuns = 0;
+        for (auto const& s : m_fields->m_sections) {
+            if (s.reached > 0) visited++;
+            if (s.reached >= minAttempts) scored++;
+            mostRuns = std::max(mostRuns, s.reached);
+        }
+
+        log::debug(
+            "strip built: levelLength {:.0f}, sections {}, visited {}, scored {}, most runs {}, bands {}, at ({:.0f}, {:.0f})",
+            m_levelLength, count, visited, scored, mostRuns, strip->getChildrenCount() - 1, left, y
+        );
     }
 };
 
@@ -322,7 +370,9 @@ namespace {
 
         for (size_t i = 0; i < sections.size(); i++) {
             double risk = riskOf(sections[i], minAttempts);
-            if (risk > 0.0) ranked.emplace_back(risk, i);
+            // 0.0 means "scored, and rock solid" - only a negative risk means
+            // there isn't enough data yet, and those are the ones to drop
+            if (risk >= 0.0) ranked.emplace_back(risk, i);
         }
         std::sort(ranked.begin(), ranked.end(), [](auto const& a, auto const& b) { return a.first > b.first; });
         return ranked;
@@ -354,7 +404,11 @@ class $modify(ConsistencyPauseLayer, PauseLayer) {
         // one line, so the pause screen stays readable; the full list is a click away
         std::string summary;
         if (ranked.empty()) {
-            summary = "Consistency Map: not enough attempts yet";
+            summary = fmt::format("Consistency Map: no section played {} times yet", minAttempts);
+        }
+        else if (ranked[0].first < 0.15) {
+            // scored and calm is a real answer, not the same as having no data
+            summary = fmt::format("Consistency Map: all clear ({} sections scored)", ranked.size());
         }
         else {
             auto const& s = static_cast<ConsistencyPlayLayer*>(pl)->m_fields->m_sections[ranked[0].second];
@@ -402,10 +456,14 @@ class $modify(ConsistencyPauseLayer, PauseLayer) {
 
         std::string body;
         if (ranked.empty()) {
+            int played = 0;
+            for (auto const& s : sections) if (s.reached > 0) played++;
+
             body = fmt::format(
                 "No section has been played through <cy>{}</c> times yet.\n\n"
-                "Sections stay unscored until then, so the map reports your timing and not noise.",
-                minAttempts
+                "<cy>{}</c> sections have been visited so far. They stay unscored until "
+                "there are enough runs to tell your timing from noise.",
+                minAttempts, played
             );
         }
         else {
